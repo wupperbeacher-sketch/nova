@@ -78,6 +78,8 @@ CONFIG_SCHEMA = (
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(WattstundeNova),
+            # True: verbinden, Daten holen, selbst trennen (schont Batterie und Funk)
+            cv.Optional("on_demand", default=True): cv.boolean,
             **{cv.Optional(k): v for k, v in SENSORS.items()},
             **{cv.Optional(k): v for k, v in BINARY_SENSORS.items()},
         }
@@ -91,6 +93,7 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await ble_client.register_ble_node(var, config)
+    cg.add(var.set_on_demand(config["on_demand"]))
 
     for key in SENSORS:
         if key in config:

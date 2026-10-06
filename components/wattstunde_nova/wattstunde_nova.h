@@ -62,6 +62,9 @@ class WattstundeNova : public ble_client::BLEClientNode, public PollingComponent
   NOVA_BINARY_SENSOR(heater)
   NOVA_BINARY_SENSOR(connected)
 
+ public:
+  void set_on_demand(bool on_demand) { this->on_demand_ = on_demand; }
+
  protected:
   void send_request_();
   void on_notify_(const uint8_t *data, uint16_t len);
@@ -73,6 +76,11 @@ class WattstundeNova : public ble_client::BLEClientNode, public PollingComponent
   std::vector<uint8_t> frame_;
   uint32_t frames_ok_{0};
   uint32_t requests_{0};
+
+  // Verbinden bei Bedarf: verbinden, Daten holen, selbst trennen
+  bool on_demand_{true};
+  bool cycle_active_{true};  // beim Start verbindet ble_client automatisch
+  uint32_t last_data_ms_{0};
 };
 
 }  // namespace wattstunde_nova

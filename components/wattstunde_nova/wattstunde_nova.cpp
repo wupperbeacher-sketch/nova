@@ -4,6 +4,7 @@
 #include "wattstunde_nova.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/hal.h"
 #include <algorithm>
 
 #ifdef USE_ESP32
@@ -39,6 +40,7 @@ static uint32_t be(const std::vector<uint8_t> &m, size_t pos, size_t size) {
 void WattstundeNova::dump_config() {
   ESP_LOGCONFIG(TAG, "Wattstunde NOVA BMS (experimentell)");
   ESP_LOGCONFIG(TAG, "  MAC: %s", this->parent()->address_str());
+  ESP_LOGCONFIG(TAG, "  Verbinden bei Bedarf: %s", YESNO(this->on_demand_));
   LOG_UPDATE_INTERVAL(this);
 }
 
@@ -52,11 +54,17 @@ void WattstundeNova::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if
       break;
     }
     case ESP_GATTC_DISCONNECT_EVT: {
-      ESP_LOGW(TAG, "[%s] Verbindung getrennt", this->parent()->address_str());
       this->node_state = espbt::ClientState::IDLE;
       this->char_handle_ = 0;
       this->frame_.clear();
-      this->publish_unavailable_();
+      if (this->on_demand_ && !this->cycle_active_) {
+        // von uns selbst getrennt, nachdem die Daten da waren
+        ESP_LOGD(TAG, "[%s] Verbindung planmäßig getrennt", this->parent()->address_str());
+      } else {
+        ESP_LOGW(TAG, "[%s] Verbindung getrennt (Grund 0x%02X)", this->parent()->address_str(),
+                 param->disconnect.reason);
+        if (!this->on_demand_) this->publish_unavailable_();
+      }
       break;
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
@@ -106,9 +114,29 @@ void WattstundeNova::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if
 }
 
 void WattstundeNova::update() {
+  // "Verbunden" = in den letzten 3 Intervallen Daten erhalten
+  if (this->connected_binary_sensor_ != nullptr && this->last_data_ms_ != 0 &&
+      millis() - this->last_data_ms_ > 3 * this->get_update_interval()) {
+    this->connected_binary_sensor_->publish_state(false);
+  }
+
+  if (this->on_demand_) {
+    if (this->node_state == espbt::ClientState::ESTABLISHED) {
+      this->send_request_();
+      return;
+    }
+    if (this->cycle_active_) {
+      ESP_LOGD(TAG, "[%s] Abfrage läuft noch, warte auf Verbindung", this->parent()->address_str());
+      return;
+    }
+    ESP_LOGD(TAG, "[%s] starte Abfrage", this->parent()->address_str());
+    this->cycle_active_ = true;
+    this->parent()->set_auto_connect(true);  // ble_client verbindet beim nächsten Advertisement
+    return;
+  }
+
   if (this->node_state != espbt::ClientState::ESTABLISHED) {
     ESP_LOGD(TAG, "[%s] nicht verbunden, keine Abfrage", this->parent()->address_str());
-    if (this->connected_binary_sensor_ != nullptr) this->connected_binary_sensor_->publish_state(false);
     return;
   }
   this->send_request_();
@@ -172,7 +200,18 @@ void WattstundeNova::on_notify_(const uint8_t *data, uint16_t len) {
     return;
   }
   this->frames_ok_++;
+  this->last_data_ms_ = millis();
   this->decode_(msg);
+
+  if (this->on_demand_ && this->cycle_active_) {
+    // Daten da: nicht sofort wieder verbinden und Verbindung selbst trennen
+    this->cycle_active_ = false;
+    this->parent()->set_auto_connect(false);
+    this->set_timeout("nova_disconnect", 100, [this]() {
+      ESP_LOGD(TAG, "[%s] Daten erhalten, trenne Verbindung", this->parent()->address_str());
+      this->parent()->disconnect();
+    });
+  }
 }
 
 void WattstundeNova::decode_(const std::vector<uint8_t> &m) {
