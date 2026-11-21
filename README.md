@@ -7,6 +7,8 @@ Die Werte landen als normale ESPHome-Sensoren in Home Assistant.
 Das Protokoll ist aus [aiobmsble](https://github.com/patman15/aiobmsble)
 (`ws_nova_bms.py`, Apache-2.0) portiert.
 
+> 📖 **Komplette Anleitung für den NuggetProxy** (ATOM Lite mit NOVA, Victron, MaxxFan und Status-LED): [ANLEITUNG-NuggetProxy.md](ANLEITUNG-NuggetProxy.md)
+
 ## Status
 
 **Getestet** mit 2× Wattstunde NOVA Base 100 Ah an einem M5Stack ATOM Lite
