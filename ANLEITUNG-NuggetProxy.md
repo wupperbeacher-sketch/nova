@@ -30,6 +30,7 @@ Alle Werte landen als ganz normale Entitäten in Home Assistant.
 | Was | Wofür |
 |---|---|
 | M5Stack ATOM Lite | der Proxy selbst (ESP32 mit Taste, RGB-LED und IR-Diode) |
+| M5Stack Mini Infrared Unit (U002) | IR-Sender und -Empfänger am Grove-Anschluss, für den MaxxFan (siehe [Abschnitt 6](#6-maxxfan-bedienen)) |
 | Home Assistant mit **ESPHome Builder** | zum Erstellen und Aufspielen der Firmware |
 | WLAN im Nugget (Router „LippyG5“) | damit der ATOM mit Home Assistant spricht |
 | Victron-**Bindkeys** | zum Entschlüsseln der Victron-Daten (in der VictronConnect-App unter *Produktinfo → Instant Readout*) |
@@ -166,7 +167,49 @@ Das hilft, wenn mal etwas hängt. Ein Neustart ist auch in HA über **„NuggetP
 
 ### So funktioniert die Steuerung
 
-Der ATOM sendet per Infrarot **immer den kompletten Zustand** an den Lüfter, genau wie die Originalfernbedienung: an/aus, Stufe, Richtung, Haube, Automatik und Soll-Temperatur. Eine Rückmeldung vom Lüfter gibt es nicht. HA zeigt also, **was zuletzt gesendet wurde**.
+Der ATOM sendet per Infrarot **immer den kompletten Zustand** an den Lüfter, genau wie die Originalfernbedienung: an/aus, Stufe, Richtung, Haube, Automatik und Soll-Temperatur.
+
+- Jeder Befehl geht über **beide IR-Sender** raus: die IR Unit am Grove-Anschluss und die eingebaute Diode des ATOM. Jeder sendet **3× hintereinander**, damit möglichst kein Befehl verloren geht.
+- Der **Empfänger der IR Unit hört die Originalfernbedienung mit**. Bedient jemand den Lüfter mit der Fernbedienung, stellt der ATOM die Entitäten in HA auf denselben Stand, ohne selbst etwas zu senden.
+- Eine Rückmeldung vom **Lüfter selbst** gibt es nicht. HA zeigt also, was zuletzt gesendet oder von der Fernbedienung empfangen wurde.
+
+### Die IR Unit anschließen
+
+Die **M5Stack Mini Infrared Unit (U002)** kommt mit dem beiliegenden Grove-Kabel an den Grove-Anschluss des ATOM Lite. Löten ist nicht nötig.
+
+| Ader | ATOM-Pin | Funktion |
+|---|---|---|
+| gelb | GPIO26 | IR-Sender |
+| weiß | GPIO32 | IR-Empfänger (invertiert) |
+| rot / schwarz | 5V / GND | Versorgung |
+
+```yaml
+remote_transmitter:
+  - id: ir_transmitter        # eingebaute IR-Diode
+    pin:
+      number: GPIO12
+      ignore_strapping_warning: true
+    carrier_duty_percent: 50%
+    non_blocking: true
+  - id: ir_unit_sender        # IR Unit
+    pin: GPIO26
+    carrier_duty_percent: 50%
+    non_blocking: true
+
+remote_receiver:
+  - id: ir_unit_empfaenger
+    pin:
+      number: GPIO32
+      inverted: true
+    dump: maxxfan
+    on_maxxfan:
+      # gleicht die HA-Entitäten mit der Fernbedienung ab (siehe YAML)
+```
+
+**Gut zu wissen:**
+- Die IR Unit reicht nicht weiter als die eingebaute Diode, laut Erfahrungsberichten etwa 1 m. Ihr Vorteil: Sie lässt sich mit dem Kabel **nah an den Empfänger des MaxxFan** bringen.
+- Der Empfänger hört auch die **eigenen Sendungen** des ATOM. Alles, was in den **1,5 Sekunden** nach einer eigenen Sendung ankommt, wird deshalb ignoriert.
+- Damit zwei Sender, ein Empfänger und die LED in den RMT-Speicher des ESP32 passen, nutzt die Status-LED nur `rmt_symbols: 64`.
 
 ### Die Entitäten in Home Assistant
 
@@ -199,9 +242,9 @@ Zum **Schließen** müssen also **beide** aus sein.
 
 ### Tipps für ein sicheres IR-Signal
 
-Die IR-Diode im ATOM ist klein und reicht nicht weit. Wenn ein Befehl mal nicht ankommt:
+Infrarot reicht nicht weit. Wenn ein Befehl mal nicht ankommt:
 
-- den ATOM möglichst mit **freier Sicht** auf den Empfänger des MaxxFan anbringen
+- die **IR Unit** möglichst nah und mit **freier Sicht** auf den Empfänger des MaxxFan anbringen
 - eine **offene Haube** kann den Empfänger teilweise verdecken, deshalb klappt „zu“ manchmal schlechter als „auf“
 - direkte **Sonne** stört Infrarot
 - im Zweifel **„MaxxFan Zustand erneut senden“** drücken
@@ -240,6 +283,7 @@ Die Kopie unter `components/victron_ble/` ist bis auf eine Stelle identisch: `ad
 | **LED orange** | HA nicht verbunden: Internet oder Tailscale am Router prüfen, HA zu Hause erreichbar? |
 | **Builder: „Update queued“ / Gerät offline** | Der ATOM ist nicht unter `use_address` erreichbar, z. B. weil er gerade im Heim-WLAN ist. Siehe [Abschnitt 3](#3-wlan-nugget-zuhause-und-notfall-hotspot). |
 | **Builder bricht beim Kompilieren ab** | Log ab der Zeile `FAILED` ansehen. Bei `str_snprintf` stimmt die Victron-Quelle nicht, sie muss aus diesem Repository kommen (Abschnitt 2.2). |
+| **Fernbedienung wird nicht erkannt** | Im Log muss beim Drücken eine Zeile `Fernbedienung: an=… Stufe=…` erscheinen. Fehlt sie, die Fernbedienung auf die IR Unit richten und das Grove-Kabel prüfen. |
 | **Haube geht nicht zu** | Sind **„MaxxFan“ und „Haube offen“ beide aus**? Dann „Zustand erneut senden“. Siehe [Abschnitt 6](#6-maxxfan-bedienen). |
 | **NOVA-Werte fehlen** | „Nova Base X Verbunden“ und RSSI prüfen. Unter etwa −90 dBm ist der Empfang zu schwach. |
 | **Victron-Werte fehlen** | Bindkey und MAC-Adresse prüfen. In VictronConnect muss „Instant Readout“ eingeschaltet sein. |
@@ -251,8 +295,6 @@ Die Kopie unter `components/victron_ble/` ist bis auf eine Stelle identisch: `ad
 
 ## 9. Ideen für später
 
-- **IR-Einheit für den MaxxFan:** Die **M5Stack Mini Infrared Unit (U002)** kostet etwa 5 € und kommt an den Grove-Anschluss des ATOM. Mit Kabel lässt sie sich direkt auf den MaxxFan ausrichten. Außerdem kann sie die **Originalfernbedienung mithören**, sodass HA auch Änderungen per Fernbedienung mitbekommt.
-- **Befehle mehrfach senden:** Jeden MaxxFan-Befehl 2–3× schicken, damit seltener ein Signal verloren geht.
 - **Haube als eigenes Element:** In HA „Öffnen“ und „Schließen“ statt eines Schalters.
 
 ---
